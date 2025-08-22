@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Music Drop — Demo (No Backend)</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #161922; --muted: #8992a1; --fg: #eef1f7; --brand: #6aa9ff; --accent:#7effa7; --danger:#ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background: var(--bg); color: var(--fg); }
+    a { color: var(--brand); text-decoration: none; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .title { font-size: clamp(18px, 2.5vw, 28px); font-weight: 700; letter-spacing: 0.3px; }
+    .btn { background: var(--brand); color: #0b1220; border: 0; padding: 10px 14px; border-radius: 12px; font-weight: 700; cursor: pointer; transition: filter .15s ease, transform .04s ease; }
+    .btn:hover { filter: brightness(1.1); }
+    .btn:active { transform: translateY(1px); }
+    .btn.secondary { background: #22283a; color: var(--fg); }
+
+    .grid { display:grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .card { grid-column: span 12; background: var(--panel); border: 1px solid rgba(255,255,255,0.06); border-radius: 18px; padding: 16px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+    @media (min-width: 860px) {
+      .card.half { grid-column: span 6; }
+      .card.third { grid-column: span 4; }
+    }
+    .muted { color: var(--muted); font-size: 14px; }
+    .stack { display:flex; flex-direction:column; gap:12px; }
+
+    /* Drop zone */
+    .dropzone { border: 2px dashed rgba(255,255,255,0.18); border-radius: 18px; padding: 24px; text-align:center; background: #121625; transition: border-color .15s ease, background .15s ease; }
+    .dropzone.drag { border-color: var(--accent); background: #0f1522; }
+    .pill { display:inline-flex; align-items:center; gap:8px; background:#22283a; padding:8px 12px; border-radius:999px; font-size:12px; color:var(--muted); }
+
+    /* Lists */
+    .track { display:flex; align-items:center; gap:12px; padding:10px; border-radius: 12px; background: #0f1320; border: 1px solid rgba(255,255,255,0.06); }
+    .track .meta { flex:1; overflow:hidden; }
+    .ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge { background:#27314a; color:#cfe0ff; font-size:11px; padding:4px 8px; border-radius:8px; margin-left:6px; }
+    audio { width: 260px; max-width: 45vw; }
+
+    /* Tabs / views */
+    #publicApp, #adminApp { display:none; }
+    .visible { display:block; }
+
+    /* Login modal */
+    .modal { position: fixed; inset: 0; display: none; place-items: center; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
+    .modal .sheet { width: min(520px, 96vw); background: var(--panel); border-radius: 18px; padding: 24px; border:1px solid rgba(255,255,255,.06); }
+    .field { display:flex; flex-direction:column; gap:8px; }
+    .field input, .field textarea { background:#0b1020; color:var(--fg); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:12px; outline:none; font-size:14px; }
+    .row { display:flex; gap:10px; align-items:center; }
+
+    .toast { position: fixed; bottom: 18px; right: 18px; background:#0e1527; border:1px solid rgba(255,255,255,.12); padding:10px 14px; border-radius: 10px; display:none; }
+    .danger { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="title">🎵 Music Drop</div>
+      <div class="row">
+        <button class="btn secondary" id="gotoPublic">Public</button>
+        <button class="btn" id="openAdminLogin">Admin</button>
+      </div>
+    </div>
+
+    <!-- PUBLIC VIEW -->
+    <section id="publicApp" class="visible">
+      <div class="grid">
+        <div class="card half stack">
+          <h2>Send a note to the admin</h2>
+          <p class="muted">Write anything here. After you submit, it disappears from this page and only the admin can see it.</p>
+          <div class="field">
+            <label for="noteText">Message</label>
+            <textarea id="noteText" rows="3" placeholder="Type your message..."></textarea>
+          </div>
+          <div class="row">
+            <button class="btn" id="sendNoteBtn">Send to Admin</button>
+            <span id="noteStatus" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="card half stack">
+          <h2>Tracks</h2>
+          <p class="muted">Songs dropped by the admin will appear here for everyone to play.</p>
+          <div id="tracksList" class="stack"></div>
+          <p class="muted" id="noTracks" style="display:none;">No tracks yet. Check back later.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ADMIN VIEW -->
+    <section id="adminApp">
+      <div class="grid">
+        <div class="card half stack">
+          <h2>Inbox from Public</h2>
+          <p class="muted">Only visible to admin. Newest first.</p>
+          <div id="inbox" class="stack"></div>
+          <p class="muted" id="emptyInbox" style="display:none;">No messages yet.</p>
+        </div>
+
+        <div class="card half stack">
+          <h2>Drop MP3 files</h2>
+          <div id="dz" class="dropzone">
+            <p class="muted">Drag & drop MP3 files here, or click to choose.</p>
+            <input id="fileInput" type="file" accept="audio/mpeg,audio/mp3" multiple style="display:none" />
+            <div id="chosen" class="stack" style="margin-top:12px"></div>
+          </div>
+          <div class="row">
+            <button class="btn" id="submitFilesBtn">Submit</button>
+            <span class="muted">Files will be added to the public Tracks list.</span>
+          </div>
+        </div>
+
+        <div class="card stack">
+          <h3>All Uploaded Tracks (Admin)</h3>
+          <div id="adminTracks" class="stack"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- LOGIN MODAL -->
+  <div class="modal" id="loginModal" role="dialog" aria-modal="true">
+    <div class="sheet stack">
+      <h3>Admin Login</h3>
+      <p class="muted">Use username <strong>babu</strong> and password <strong>babu</strong> for this demo. (Not secure—front‑end only)</p>
+      <div class="grid">
+        <div class="card stack">
+          <div class="field">
+            <label>Username</label>
+            <input id="username" placeholder="username" />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input id="password" type="password" placeholder="password" />
+          </div>
+          <div class="row">
+            <button class="btn" id="loginBtn">Log in</button>
+            <button class="btn secondary" id="cancelLogin">Cancel</button>
+            <span id="loginError" class="muted danger"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---------- Tiny utilities ----------
+    const $ = (sel) => document.querySelector(sel);
+    const el = (tag, opts = {}) => Object.assign(document.createElement(tag), opts);
+    const toast = (msg) => { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 1800); };
+
+    // ---------- IndexedDB setup ----------
+    const DB_NAME = 'music-drop-db';
+    const DB_VER = 1;
+    let db;
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VER);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('tracks')) {
+            const store = db.createObjectStore('tracks', { keyPath: 'id', autoIncrement: true });
+            store.createIndex('by_created', 'created');
+          }
+          if (!db.objectStoreNames.contains('messages')) {
+            const m = db.createObjectStore('messages', { keyPath: 'id', autoIncrement: true });
+            m.createIndex('by_created', 'created');
+          }
+        };
+        req.onsuccess = () => { db = req.result; resolve(db); };
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    function tx(store, mode = 'readonly') { return db.transaction(store, mode).objectStore(store); }
+
+    async function addMessage(text) {
+      return new Promise((resolve, reject) => {
+        const req = tx('messages', 'readwrite').add({ text, created: Date.now(), read: false });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function getMessages() {
+      return new Promise((resolve, reject) => {
+        const store = tx('messages');
+        const idx = store.index('by_created');
+        const out = [];
+        idx.openCursor(null, 'prev').onsuccess = (e) => {
+          const cursor = e.target.result; if (!cursor) return resolve(out);
+          out.push(cursor.value); cursor.continue();
+        };
+      });
+    }
+
+    async function markMessageRead(id) {
+      return new Promise((resolve, reject) => {
+        const store = tx('messages', 'readwrite');
+        const getReq = store.get(id);
+        getReq.onsuccess = () => {
+          const val = getReq.result; if (!val) return resolve();
+          val.read = true; store.put(val).onsuccess = () => resolve();
+        };
+        getReq.onerror = () => reject(getReq.error);
+      });
+    }
+
+    async function addTracks(files) {
+      const store = tx('tracks', 'readwrite');
+      const added = [];
+      for (const f of files) {
+        if (!/^audio\/(mpeg|mp3)$/.test(f.type) && !f.name.toLowerCase().endsWith('.mp3')) continue;
+        // Store the Blob directly. Browsers will persist large blobs in IDB.
+        const rec = { name: f.name, type: f.type || 'audio/mpeg', size: f.size, created: Date.now(), blob: f };
+        const id = await new Promise((res, rej) => { const r = store.add(rec); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+        added.push({ id, ...rec });
+      }
+      return added;
+    }
+
+    async function getAllTracks() {
+      return new Promise((resolve) => {
+        const store = tx('tracks');
+        const idx = store.index('by_created');
+        const arr = [];
+        idx.openCursor(null, 'prev').onsuccess = (e) => {
+          const c = e.target.result; if (!c) return resolve(arr);
+          arr.push(c.value); c.continue();
+        };
+      });
+    }
+
+    // ---------- Views & routing ----------
+    const publicApp = $('#publicApp');
+    const adminApp = $('#adminApp');
+
+    function showPublic() { publicApp.classList.add('visible'); adminApp.classList.remove('visible'); }
+    function showAdmin() { adminApp.classList.add('visible'); publicApp.classList.remove('visible'); renderInbox(); renderAdminTracks(); }
+
+    // ---------- Admin login (front-end only; not secure) ----------
+    const loginModal = $('#loginModal');
+    $('#openAdminLogin').onclick = () => { loginModal.style.display = 'grid'; $('#username').focus(); };
+    $('#cancelLogin').onclick = () => { loginModal.style.display = 'none'; };
+
+    $('#loginBtn').onclick = () => {
+      const u = $('#username').value.trim();
+      const p = $('#password').value.trim();
+      if (u === 'babu' && p === 'babu') {
+        loginModal.style.display = 'none';
+        location.hash = '#admin';
+        showAdmin();
+        toast('Logged in as admin');
+      } else {
+        $('#loginError').textContent = 'Invalid credentials';
+      }
+    };
+
+    // ---------- Public: send a note ----------
+    $('#sendNoteBtn').onclick = async () => {
+      const txt = $('#noteText').value.trim();
+      if (!txt) return toast('Type a message first');
+      await addMessage(txt);
+      $('#noteText').value = '';
+      $('#noteStatus').textContent = 'Sent to admin ✔';
+      setTimeout(() => $('#noteStatus').textContent = '', 1800);
+      // Do NOT show message here (privacy by design)
+    };
+
+    // ---------- Admin: inbox ----------
+    async function renderInbox() {
+      const box = $('#inbox');
+      box.innerHTML = '';
+      const msgs = await getMessages();
+      if (!msgs.length) { $('#emptyInbox').style.display = 'block'; return; }
+      $('#emptyInbox').style.display = 'none';
+      msgs.forEach(m => {
+        const item = el('div', { className: 'track' });
+        const left = el('div', { className: 'meta' });
+        left.append(
+          el('div', { className: 'ellipsis', textContent: m.text }),
+          el('div', { className: 'muted', textContent: new Date(m.created).toLocaleString() })
+        );
+        const mark = el('button', { className: 'btn secondary', textContent: m.read ? 'Read' : 'Mark read' });
+        if (m.read) mark.disabled = true;
+        mark.onclick = async () => { await markMessageRead(m.id); renderInbox(); };
+        item.append(left, mark);
+        box.append(item);
+      });
+    }
+
+    // ---------- Admin: drop zone & submit ----------
+    const dz = $('#dz');
+    const fileInput = $('#fileInput');
+    const chosen = $('#chosen');
+    let stagedFiles = [];
+
+    const openPicker = () => fileInput.click();
+    dz.addEventListener('click', openPicker);
+
+    function handleFiles(files) {
+      const arr = Array.from(files);
+      const mp3s = arr.filter(f => /mp3|mpeg/.test(f.type) || f.name.toLowerCase().endsWith('.mp3'));
+      if (!mp3s.length) { toast('Please choose MP3 files'); return; }
+      stagedFiles.push(...mp3s);
+      renderChosen();
+    }
+
+    function renderChosen() {
+      chosen.innerHTML = '';
+      stagedFiles.forEach(f => {
+        const row = el('div', { className: 'row' });
+        row.append(el('span', { className: 'pill ellipsis', textContent: `${f.name} • ${(f.size/1024/1024).toFixed(2)} MB` }));
+        const rm = el('button', { className: 'btn secondary', textContent: 'Remove' });
+        rm.onclick = () => { stagedFiles = stagedFiles.filter(x => x !== f); renderChosen(); };
+        row.append(rm);
+        chosen.append(row);
+      });
+    }
+
+    fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+    ;['dragenter','dragover'].forEach(evt => dz.addEventListener(evt, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+    ;['dragleave','drop'].forEach(evt => dz.addEventListener(evt, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
+    dz.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files));
+
+    $('#submitFilesBtn').onclick = async () => {
+      if (!stagedFiles.length) return toast('No files selected');
+      const added = await addTracks(stagedFiles);
+      stagedFiles = []; renderChosen();
+      toast(`Added ${added.length} track(s)`);
+      await Promise.all([renderPublicTracks(), renderAdminTracks()]);
+    };
+
+    // ---------- Tracks: render on public + admin ----------
+    async function renderPublicTracks() {
+      const list = $('#tracksList');
+      list.innerHTML = '';
+      const tracks = await getAllTracks();
+      $('#noTracks').style.display = tracks.length ? 'none' : 'block';
+      tracks.forEach(t => {
+        const url = URL.createObjectURL(t.blob);
+        const row = el('div', { className: 'track' });
+        row.append(
+          el('div', { className:'meta' , innerHTML: `<div class="ellipsis">${t.name}</div><div class="muted">${(t.size/1024/1024).toFixed(2)} MB<span class="badge">MP3</span></div>` }),
+          Object.assign(el('audio', { controls: true }), { src: url })
+        );
+        list.append(row);
+      });
+    }
+
+    async function renderAdminTracks() {
+      const list = $('#adminTracks');
+      list.innerHTML = '';
+      const tracks = await getAllTracks();
+      tracks.forEach(t => {
+        const url = URL.createObjectURL(t.blob);
+        const row = el('div', { className: 'track' });
+        row.append(
+          el('div', { className:'meta', innerHTML: `<div class="ellipsis">${t.name}</div><div class="muted">${new Date(t.created).toLocaleString()}</div>` }),
+          Object.assign(el('audio', { controls: true }), { src: url })
+        );
+        list.append(row);
+      });
+    }
+
+    // ---------- Simple hash routing ----------
+    window.addEventListener('hashchange', () => {
+      if (location.hash === '#admin') {
+        // if a prior session has set admin flag, skip login; else require login
+        if (sessionStorage.getItem('isAdmin') === '1') {
+          showAdmin();
+        } else {
+          loginModal.style.display = 'grid';
+        }
+      } else {
+        showPublic();
+      }
+    });
+
+    // After successful login, remember for this tab session only
+    (function patchLoginFlag(){
+      const orig = $('#loginBtn').onclick;
+      $('#loginBtn').onclick = () => {
+        const u = $('#username').value.trim();
+        const p = $('#password').value.trim();
+        if (u === 'babu' && p === 'babu') {
+          sessionStorage.setItem('isAdmin','1');
+        }
+        // call original logic
+        const evt = new Event('click');
+        orig.call($('#loginBtn'), evt);
+      };
+    })();
+
+    // ---------- Boot ----------
+    (async function init(){
+      await openDB();
+      await renderPublicTracks();
+      // show the correct view
+      if (location.hash === '#admin') {
+        if (sessionStorage.getItem('isAdmin') === '1') showAdmin(); else loginModal.style.display = 'grid';
+      } else {
+        showPublic();
+      }
+
+      // topbar buttons
+      $('#gotoPublic').onclick = () => { location.hash = ''; showPublic(); };
+    })();
+  </script>
+</body>
+</html>
